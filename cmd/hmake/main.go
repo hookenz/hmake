@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/dominikbraun/graph"
@@ -17,7 +18,8 @@ type MakeArgs struct {
 
 // Makefile represents a parsed Makefile
 type Makefile struct {
-	Targets map[string]Target
+	Targets   map[string]Target
+	Variables map[string]string
 }
 
 // Target represents a target in the Makefile
@@ -25,6 +27,14 @@ type Target struct {
 	Name         string
 	Dependencies []string
 	Commands     []string
+}
+
+// Run executes the commands of a target
+func (t *Target) Run() {
+	fmt.Println("running commands for target: ", t.Name)
+	for _, command := range t.Commands {
+		fmt.Println("    ", command)
+	}
 }
 
 func main() {
@@ -41,33 +51,17 @@ func main() {
 		return
 	}
 
-	for target, info := range makefile.Targets {
-		fmt.Printf("Target: %s\n", target)
-
-		if len(info.Dependencies) > 0 {
-			fmt.Printf("  Dependencies: %s\n", strings.Join(info.Dependencies, " "))
-		}
-
-		if len(info.Commands) > 0 {
-			fmt.Println("  Commands:")
-			for _, cmd := range info.Commands {
-				fmt.Printf("    %s\n", cmd)
-			}
-		}
-	}
-
 	targetHash := func(t Target) string {
 		return t.Name
 	}
 
 	g := graph.New(targetHash, graph.Directed(), graph.Acyclic())
-
 	for _, info := range makefile.Targets {
 		if info.Name == ".PHONY" {
 			continue
 		}
 
-		fmt.Println("Adding vertex: ", info.Name)
+		// fmt.Println("Adding vertex: ", info.Name)
 		g.AddVertex(info)
 	}
 
@@ -83,20 +77,28 @@ func main() {
 		}
 	}
 
-	fmt.Println("DFS:")
-	_ = graph.DFS(g, "build", func(t string) bool {
-		fmt.Print(t)
-		fmt.Print(" -> ")
-		return false
-	})
+	for _, target := range args.targets {
+		if _, ok := makefile.Targets[target]; !ok {
+			fmt.Println("Target not found: ", target)
+			os.Exit(1)
+		}
 
-	targets, err := graph.TopologicalSort(g)
-	if err != nil {
-		panic(err)
+		fmt.Println("Target: ", target)
+
+		targets := []string{}
+
+		graph.DFS(g, target, func(t string) bool {
+			targets = append(targets, t)
+			return false
+		})
+
+		// print reverse order
+		for i := len(targets) - 1; i >= 0; i-- {
+			// fmt.Println("  ", targets[i])
+			t := makefile.Targets[targets[i]]
+			t.Run()
+		}
 	}
-
-	fmt.Println("Topological sort:")
-	fmt.Println(targets)
 }
 
 func ParseArgs() MakeArgs {
@@ -118,7 +120,8 @@ func ParseArgs() MakeArgs {
 // NewMakefile initializes a new Makefile
 func NewMakefile() *Makefile {
 	return &Makefile{
-		Targets: make(map[string]Target),
+		Targets:   make(map[string]Target),
+		Variables: make(map[string]string),
 	}
 }
 
@@ -144,6 +147,12 @@ func (mf *Makefile) Parse(filename string) error {
 		// If it starts with a tab, it's a command
 		if strings.HasPrefix(line, "\t") {
 			currentCommands = append(currentCommands, strings.TrimSpace(line))
+			continue
+		}
+
+		// Check if line defines a variable
+		if matches := regexp.MustCompile(`^(\w+)\s*=\s*(.*)$`).FindStringSubmatch(line); len(matches) == 3 {
+			mf.Variables[matches[1]] = matches[2]
 			continue
 		}
 
