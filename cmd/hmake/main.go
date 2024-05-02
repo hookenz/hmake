@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/dominikbraun/graph"
 )
 
 type MakeArgs struct {
@@ -20,6 +22,7 @@ type Makefile struct {
 
 // Target represents a target in the Makefile
 type Target struct {
+	Name         string
 	Dependencies []string
 	Commands     []string
 }
@@ -38,15 +41,54 @@ func main() {
 		return
 	}
 
-	fmt.Println("Targets, dependencies, and commands:")
 	for target, info := range makefile.Targets {
 		fmt.Printf("Target: %s\n", target)
-		fmt.Printf("  Dependencies: %s\n", strings.Join(info.Dependencies, ", "))
-		fmt.Println("  Commands:")
-		for _, cmd := range info.Commands {
-			fmt.Printf("    %s\n", cmd)
+
+		if len(info.Dependencies) > 0 {
+			fmt.Printf("  Dependencies: %s\n", strings.Join(info.Dependencies, " "))
+		}
+
+		if len(info.Commands) > 0 {
+			fmt.Println("  Commands:")
+			for _, cmd := range info.Commands {
+				fmt.Printf("    %s\n", cmd)
+			}
 		}
 	}
+
+	targetHash := func(t Target) string {
+		return t.Name
+	}
+
+	g := graph.New(targetHash, graph.Acyclic())
+
+	for _, info := range makefile.Targets {
+		if info.Name == ".PHONY" {
+			continue
+		}
+
+		fmt.Println("Adding vertex: ", info.Name)
+		g.AddVertex(info)
+	}
+
+	for target, info := range makefile.Targets {
+		for _, dep := range info.Dependencies {
+			if target == ".PHONY" {
+				continue
+			}
+
+			if err := g.AddEdge(target, dep); err != nil {
+				panic(err)
+			}
+		}
+	}
+
+	fmt.Println("DFS:")
+	_ = graph.DFS(g, "build", func(t string) bool {
+		fmt.Print(t)
+		fmt.Print(" -> ")
+		return false
+	})
 }
 
 func ParseArgs() MakeArgs {
@@ -86,8 +128,8 @@ func (mf *Makefile) Parse(filename string) error {
 	for scanner.Scan() {
 		line := scanner.Text()
 
-		// Skip empty lines and comments
-		if line == "" || strings.HasPrefix(line, "#") {
+		// Skip empty lines
+		if line == "" || line[0] == '#' {
 			continue
 		}
 
@@ -101,6 +143,7 @@ func (mf *Makefile) Parse(filename string) error {
 		if currentTarget != "" {
 			// Save previous target and commands
 			mf.Targets[currentTarget] = Target{
+				Name:         currentTarget,
 				Dependencies: mf.Targets[currentTarget].Dependencies,
 				Commands:     currentCommands,
 			}
@@ -113,13 +156,23 @@ func (mf *Makefile) Parse(filename string) error {
 
 		// Extract dependencies if available
 		if len(parts) > 1 {
-			deps := strings.Split(parts[1], " ")
-			for _, dep := range deps {
-				dependencies = append(dependencies, strings.TrimSpace(dep))
+			// strip comments from the end of the dependancies list
+			deps := parts[1]
+			i := strings.Index(deps, "#")
+			if i >= 0 {
+				deps = deps[:i]
+			}
+
+			for _, dep := range strings.Split(deps, " ") {
+				dep = strings.TrimSpace(dep)
+				if dep != "" {
+					dependencies = append(dependencies, strings.TrimSpace(dep))
+				}
 			}
 		}
 
 		mf.Targets[currentTarget] = Target{
+			Name:         currentTarget,
 			Dependencies: dependencies,
 			Commands:     nil,
 		}
@@ -128,6 +181,7 @@ func (mf *Makefile) Parse(filename string) error {
 	// Save commands of the last target
 	if currentTarget != "" {
 		mf.Targets[currentTarget] = Target{
+			Name:         currentTarget,
 			Dependencies: mf.Targets[currentTarget].Dependencies,
 			Commands:     currentCommands,
 		}
