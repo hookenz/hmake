@@ -60,7 +60,7 @@ func main() {
 		return t.Name
 	}
 
-	g := graph.New(targetHash, graph.Acyclic())
+	g := graph.New(targetHash, graph.Directed(), graph.Acyclic())
 
 	for _, info := range makefile.Targets {
 		if info.Name == ".PHONY" {
@@ -89,6 +89,14 @@ func main() {
 		fmt.Print(" -> ")
 		return false
 	})
+
+	targets, err := graph.TopologicalSort(g)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println("Topological sort:")
+	fmt.Println(targets)
 }
 
 func ParseArgs() MakeArgs {
