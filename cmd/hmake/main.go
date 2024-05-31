@@ -5,8 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
+	"syscall"
 
 	"github.com/dominikbraun/graph"
 )
@@ -20,6 +22,7 @@ type MakeArgs struct {
 type Makefile struct {
 	Targets   map[string]Target
 	Variables map[string]string
+	Phony     map[string]bool
 }
 
 // Target represents a target in the Makefile
@@ -29,11 +32,34 @@ type Target struct {
 	Commands     []string
 }
 
+var (
+	debug bool
+)
+
+func log(v ...interface{}) {
+	if debug {
+		fmt.Println(v...)
+	}
+}
+
+func logf(format string, args ...interface{}) {
+	if debug {
+		fmt.Printf(format, args...)
+	}
+}
+
 // Run executes the commands of a target
 func (t *Target) Run() {
 	fmt.Println("running commands for target: ", t.Name)
 	for _, command := range t.Commands {
-		fmt.Println("    ", command)
+		silent := strings.HasPrefix(command, "@")
+		if silent {
+			command = command[1:]
+		} else {
+			fmt.Println(command)
+		}
+
+		System(command)
 	}
 }
 
@@ -41,8 +67,8 @@ func main() {
 	// parse command line arguments
 
 	args := ParseArgs()
-	fmt.Println("Debug mode: ", args.debug)
-	fmt.Println("Targets: ", args.targets)
+	log("Debug mode: ", args.debug)
+	log("Targets: ", args.targets)
 
 	makefile := NewMakefile()
 	err := makefile.Parse("Makefile")
@@ -83,7 +109,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		fmt.Println("Target: ", target)
+		log("Target: ", target)
 
 		targets := []string{}
 
@@ -209,4 +235,29 @@ func (mf *Makefile) Parse(filename string) error {
 	}
 
 	return nil
+}
+
+func System(cmd string) int {
+	c := exec.Command("sh", "-c", cmd)
+	c.Stdin = os.Stdin
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+	err := c.Run()
+
+	if err == nil {
+		return 0
+	}
+
+	// Figure out the exit code
+	if ws, ok := c.ProcessState.Sys().(syscall.WaitStatus); ok {
+		if ws.Exited() {
+			return ws.ExitStatus()
+		}
+
+		if ws.Signaled() {
+			return -int(ws.Signal())
+		}
+	}
+
+	return -1
 }
